@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>LandApp → Mapbox (styled by p1 code)</title>
+  <title>LandApp → Mapbox (Phase 1 colours)</title>
 
   <link href="https://api.mapbox.com/mapbox-gl-js/v3.7.0/mapbox-gl.css" rel="stylesheet">
   <script src="https://api.mapbox.com/mapbox-gl-js/v3.7.0/mapbox-gl.js"></script>
@@ -23,13 +23,23 @@
       border-radius: 10px;
       box-shadow: 0 8px 24px rgba(0,0,0,0.14);
       font: 13px/1.3 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-      max-width: 320px;
+      max-width: 360px;
+      z-index: 2;
     }
     .panel h3 { margin: 0 0 6px; font-size: 14px; }
     .meta { color: #444; margin-bottom: 8px; }
-    .legend { display: grid; grid-template-columns: 14px 1fr; gap: 6px 8px; max-height: 240px; overflow: auto; padding-right: 6px; }
-    .swatch { width: 14px; height: 14px; border-radius: 4px; border: 1px solid rgba(0,0,0,0.15); margin-top: 2px; }
-    .code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+
+    .legend { max-height: 55vh; overflow: auto; padding-right: 6px; }
+    .legend .row { display: flex; gap: 8px; align-items: flex-start; margin: 6px 0; }
+    .legend .swatch {
+      width: 14px; height: 14px; border: 1px solid rgba(0,0,0,0.25);
+      border-radius: 3px; margin-top: 2px; flex: 0 0 auto;
+    }
+    .legend .code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      font-size: 12px; min-width: 64px; white-space: nowrap;
+    }
+    .legend .habitat { font-size: 12px; opacity: 0.9; }
   </style>
 </head>
 
@@ -42,8 +52,18 @@
     <div class="legend" id="legend"></div>
   </div>
 
-  <script>// Public Mapbox token restricted to this GitHub Pages domain
+  <script type="module">
+    import {
+      PHASE1_COLORS,
+      P1_CODE_KEY,
+      P1_HABITAT_KEY,
+      buildPhase1FillExpression,
+      hashColor
+    } from "./phase1-style.js";
+
+    // ✅ Put your *public* Mapbox token here (restrict by URL in Mapbox dashboard)
     mapboxgl.accessToken = "pk.eyJ1IjoicG9udGMiLCJhIjoiY2tzaXB5ZWFtMjEyazJucDJqMXhjODh2ciJ9.TZQLYloF5lqmchrq4JilHQ";
+
 
     const map = new mapboxgl.Map({
       container: "map",
@@ -58,8 +78,6 @@
       "+proj=tmerc +lat_0=49 +lon_0=-2 +k=0.9996012717 " +
       "+x_0=400000 +y_0=-100000 +ellps=airy +datum=OSGB36 +units=m +no_defs"
     );
-
-    const P1_CODE_KEY = "p1 code"; // NOTE: key has a space
 
     function reprojectCoord([e, n]) {
       const [lon, lat] = proj4("EPSG:27700", "WGS84", [e, n]);
@@ -106,165 +124,148 @@
       return b;
     }
 
-    // Stable colour per code (hash → HSL → hex)
-    function hashString(str) {
-      let h = 2166136261;
-      for (let i = 0; i < str.length; i++) {
-        h ^= str.charCodeAt(i);
-        h = Math.imul(h, 16777619);
-      }
-      return h >>> 0;
-    }
-
-    function hslToHex(h, s, l) {
-      s /= 100; l /= 100;
-      const k = (n) => (n + h / 30) % 12;
-      const a = s * Math.min(l, 1 - l);
-      const f = (n) => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
-      const toHex = (x) => Math.round(255 * x).toString(16).padStart(2, "0");
-      return `#${toHex(f(0))}${toHex(f(8))}${toHex(f(4))}`;
-    }
-
-    function colorForCode(code) {
-      const h = hashString(code) % 360;
-      return hslToHex(h, 70, 50);
-    }
-
     function escapeHtml(s) {
-      return String(s).replace(/[&<>"']/g, (ch) => ({
-        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;"
-      }[ch]));
+      return String(s ?? "")
+        .replaceAll("&","&amp;").replaceAll("<","&lt;")
+        .replaceAll(">","&gt;").replaceAll('"',"&quot;")
+        .replaceAll("'","&#039;");
     }
 
-    function buildMatchExpression(codes) {
-      // ["match", ["get", "p1 code"], "A1.1.1", "#...", "B5", "#...", "#cccccc"]
-      const expr = ["match", ["get", P1_CODE_KEY]];
-      for (const code of codes) expr.push(code, colorForCode(code));
-      expr.push("#cccccc"); // fallback for missing/unknown
-      return expr;
-    }
-
-    function renderLegend(codes) {
-      const legend = document.getElementById("legend");
-      legend.innerHTML = "";
-
-      codes.forEach(code => {
-        const sw = document.createElement("div");
-        sw.className = "swatch";
-        sw.style.background = colorForCode(code);
-
-        const label = document.createElement("div");
-        label.innerHTML = `<span class="code">${escapeHtml(code)}</span>`;
-
-        legend.appendChild(sw);
-        legend.appendChild(label);
-      });
+    function renderLegend(items) {
+      const el = document.getElementById("legend");
+      el.innerHTML = items.map(({ code, habitat, color }) => `
+        <div class="row">
+          <span class="swatch" style="background:${escapeHtml(color)}"></span>
+          <span class="code">${escapeHtml(code)}</span>
+          <span class="habitat">${escapeHtml(habitat || "")}</span>
+        </div>
+      `).join("");
     }
 
     async function loadAllLayers() {
-    const manifestResp = await fetch("./data/layers.json");
-    if (!manifestResp.ok) throw new Error("Failed to load layers.json");
-    const { layers } = await manifestResp.json();
+      const manifestResp = await fetch("./data/layers.json");
+      if (!manifestResp.ok) throw new Error("Failed to load ./data/layers.json");
+      const { layers } = await manifestResp.json();
 
-    // Fetch all projects in parallel
-    const collectionsWgs84 = await Promise.all(
-        layers.map(async (layer) => {
-        const r = await fetch(layer.url);
-        if (!r.ok) throw new Error(`Failed to load ${layer.url}`);
-        const fc27700 = await r.json();
+      // Fetch + reproject all files in parallel
+      const loaded = await Promise.all(layers.map(async (layer) => {
+        const resp = await fetch(layer.url);
+        if (!resp.ok) throw new Error(`Failed to load ${layer.url}`);
+        const fc27700 = await resp.json();
         const fcWgs84 = reprojectFeatureCollection(fc27700);
 
-        // Attach a file id onto each feature so we can display it in popups if useful
-        fcWgs84.features = fcWgs84.features.map(f => ({
-            ...f,
-            properties: { ...(f.properties || {}), _layer_id: layer.id, _layer_name: layer.name }
-        }));
+        // Normalise properties + attach layer metadata
+        fcWgs84.features = fcWgs84.features.map(f => {
+          const props = { ...(f.properties || {}) };
+
+          if (props[P1_CODE_KEY]) {
+            props[P1_CODE_KEY] = String(props[P1_CODE_KEY]).trim().toUpperCase();
+          }
+          if (props[P1_HABITAT_KEY]) {
+            props[P1_HABITAT_KEY] = String(props[P1_HABITAT_KEY]).trim();
+          }
+
+          props._layer_id = layer.id;
+          props._layer_name = layer.name;
+
+          return { ...f, properties: props };
+        });
 
         return { layer, fcWgs84 };
-        })
-    );
+      }));
 
-    // Build combined code list for legend + styling
-    const codeSet = new Set();
-    for (const { fcWgs84 } of collectionsWgs84) {
+      // Build code->habitat map across ALL files for legend
+      const codeToHabitat = new Map();
+      for (const { fcWgs84 } of loaded) {
         for (const f of fcWgs84.features) {
-        const code = f?.properties?.[P1_CODE_KEY];
-        if (code && String(code).trim()) codeSet.add(String(code).trim());
+          const p = f.properties || {};
+          const code = (p[P1_CODE_KEY] ?? "").toString().trim().toUpperCase();
+          if (!code) continue;
+          if (!codeToHabitat.has(code)) {
+            codeToHabitat.set(code, (p[P1_HABITAT_KEY] ?? "").toString().trim());
+          }
         }
-    }
-    const codes = Array.from(codeSet).sort((a, b) => a.localeCompare(b, "en"));
-    renderLegend(codes);
+      }
 
-    // Add each file as its own source + layers
-    for (const { layer, fcWgs84 } of collectionsWgs84) {
+      const allCodes = Array.from(codeToHabitat.keys()).sort((a,b)=>a.localeCompare(b,"en"));
+      const fillExpr = buildPhase1FillExpression(allCodes);
+
+      document.getElementById("subtitle").textContent =
+        `Loaded ${layers.length} files — coloured by Phase 1 p1 code`;
+
+      renderLegend(allCodes.map(code => ({
+        code,
+        habitat: codeToHabitat.get(code),
+        color: PHASE1_COLORS?.[code] ?? hashColor(code)
+      })));
+
+      // Add each file as a source + fill/line layers
+      for (const { layer, fcWgs84 } of loaded) {
         const sourceId = `src-${layer.id}`;
-
         map.addSource(sourceId, { type: "geojson", data: fcWgs84 });
 
         map.addLayer({
-        id: `fill-${layer.id}`,
-        type: "fill",
-        source: sourceId,
-        filter: ["==", ["geometry-type"], "Polygon"],
-        paint: {
-            "fill-color": buildMatchExpression(codes), // style by p1 code across all files
-            "fill-opacity": 0.45
-        }
+          id: `fill-${layer.id}`,
+          type: "fill",
+          source: sourceId,
+          filter: ["==", ["geometry-type"], "Polygon"],
+          paint: {
+            "fill-color": fillExpr,
+            "fill-opacity": 0.55
+          }
         });
 
         map.addLayer({
-        id: `line-${layer.id}`,
-        type: "line",
-        source: sourceId,
-        filter: ["==", ["geometry-type"], "Polygon"],
-        paint: { "line-width": 1.3 }
+          id: `line-${layer.id}`,
+          type: "line",
+          source: sourceId,
+          filter: ["==", ["geometry-type"], "Polygon"],
+          paint: {
+            "line-width": 1.2,
+            "line-color": "#2b2b2b"
+          }
         });
-    }
+      }
 
-    // Fit map to combined bounds
-    const combined = new mapboxgl.LngLatBounds();
-    for (const { fcWgs84 } of collectionsWgs84) {
+      // Fit to combined bounds
+      const combined = new mapboxgl.LngLatBounds();
+      for (const { fcWgs84 } of loaded) {
         const b = boundsFromGeoJSON(fcWgs84);
         if (!b.isEmpty()) combined.extend(b.getSouthWest()).extend(b.getNorthEast());
-    }
-    if (!combined.isEmpty()) map.fitBounds(combined, { padding: 40 });
+      }
+      if (!combined.isEmpty()) map.fitBounds(combined, { padding: 40 });
 
-    // One global click handler across all fill layers
-    const fillLayerIds = layers.map(l => `fill-${l.id}`);
+      // One popup handler for all fills
+      const fillLayerIds = layers.map(l => `fill-${l.id}`);
 
-    map.on("click", (e) => {
-        const features = map.queryRenderedFeatures(e.point, { layers: fillLayerIds });
-        const f = features[0];
+      map.on("click", (e) => {
+        const f = map.queryRenderedFeatures(e.point, { layers: fillLayerIds })[0];
         if (!f) return;
 
         const p = f.properties || {};
-
         new mapboxgl.Popup({ maxWidth: "520px" })
-        .setLngLat(e.lngLat)
-        .setHTML(`
+          .setLngLat(e.lngLat)
+          .setHTML(`
             <div style="font:13px system-ui">
-            <div><b>p1 code:</b> <span style="font-family:ui-monospace">${escapeHtml(p[P1_CODE_KEY] || "")}</span></div>
-            <div><b>p1 habitat:</b> ${escapeHtml(p["p1 habitat"] || "")}</div>
-            <div><b>survey:</b> ${escapeHtml(p["survey name"] || "")} (${escapeHtml(p["survey code"] || "")})</div>
-            <div><b>file:</b> ${escapeHtml(p["_layer_name"] || p["_layer_id"] || "")}</div>
+              <div><b>p1 code:</b> <span style="font-family:ui-monospace">${escapeHtml(p[P1_CODE_KEY])}</span></div>
+              <div><b>p1 habitat:</b> ${escapeHtml(p[P1_HABITAT_KEY])}</div>
+              <div><b>survey:</b> ${escapeHtml(p["survey name"])} (${escapeHtml(p["survey code"])})</div>
+              <div><b>file:</b> ${escapeHtml(p["_layer_name"] || p["_layer_id"])}</div>
             </div>
-        `)
-        .addTo(map);
-    });
+          `)
+          .addTo(map);
+      });
 
-    map.on("mousemove", (e) => {
+      map.on("mousemove", (e) => {
         const f = map.queryRenderedFeatures(e.point, { layers: fillLayerIds })[0];
         map.getCanvas().style.cursor = f ? "pointer" : "";
-    });
+      });
     }
 
-    map.on("load", () => {
-    loadAllLayers().catch(err => {
-        console.error(err);
-        alert(err.message);
-    });
-    });
-
+    map.on("load", () => loadAllLayers().catch(err => {
+      console.error(err);
+      alert(err.message);
+    }));
   </script>
 </body>
 </html>

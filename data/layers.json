@@ -1,6 +1,9 @@
 {
   "layers": [
-    { "id": "GMF22", "name": "Great Mell Fell", "url": "./data/gmf_habitats.json" },
-    { "id": "xx", "name": "xx", "url": "./data/habitats_68bec.json" }
+    { "id": "GMF22", "name": "Great Mell Fell", "url": "./data/habitats_gmf22.json" },
+    { "id": "AR23", "name": "Ali Ross", "url": "./data/habitats_ar23.json" },
+    {"id": "JE23", "name": "John Edmondson", "url":"./data/habitats_je23.json" },
+    {"id": "HH23", "name": "Hausehead", "url":"./data/habitats_hh23.json" },
+    {"id": "BM24", "name": "Binks Moss", "url":"./data/habitats_bm24.json" }
   ]
 }
