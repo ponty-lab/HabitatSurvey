@@ -1,0 +1,6 @@
+{
+  "layers": [
+    { "id": "GMF22", "name": "Great Mell Fell", "url": "./data/gmf_habitats.geojson" },
+    { "id": "xx", "name": "xx", "url": "./data/habitats_68bec.json.geojson" }
+  ]
+}

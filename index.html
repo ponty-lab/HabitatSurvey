@@ -161,118 +161,110 @@
       });
     }
 
-    map.on("load", async () => {
-      const resp = await fetch("./data/habitats_689db.json");
-      if (!resp.ok) throw new Error("Failed to load GeoJSON: " + resp.status);
-      const landapp27700 = await resp.json();
+    async function loadAllLayers() {
+    const manifestResp = await fetch("./data/layers.json");
+    if (!manifestResp.ok) throw new Error("Failed to load layers.json");
+    const { layers } = await manifestResp.json();
 
-      // Optional: show planName if provided
-      const planName = landapp27700?.properties?.planName;
-      document.getElementById("subtitle").textContent =
-        (planName ? `Plan: ${planName}` : "Plan loaded") + " — coloured by p1 code";
+    // Fetch all projects in parallel
+    const collectionsWgs84 = await Promise.all(
+        layers.map(async (layer) => {
+        const r = await fetch(layer.url);
+        if (!r.ok) throw new Error(`Failed to load ${layer.url}`);
+        const fc27700 = await r.json();
+        const fcWgs84 = reprojectFeatureCollection(fc27700);
 
-      // Reproject to WGS84 for Mapbox
-      const landappWgs84 = reprojectFeatureCollection(landapp27700);
+        // Attach a file id onto each feature so we can display it in popups if useful
+        fcWgs84.features = fcWgs84.features.map(f => ({
+            ...f,
+            properties: { ...(f.properties || {}), _layer_id: layer.id, _layer_name: layer.name }
+        }));
 
-      // Collect unique p1 codes from features (sorted)
-      const codeSet = new Set();
-      for (const f of landappWgs84.features) {
+        return { layer, fcWgs84 };
+        })
+    );
+
+    // Build combined code list for legend + styling
+    const codeSet = new Set();
+    for (const { fcWgs84 } of collectionsWgs84) {
+        for (const f of fcWgs84.features) {
         const code = f?.properties?.[P1_CODE_KEY];
         if (code && String(code).trim()) codeSet.add(String(code).trim());
-      }
-      const codes = Array.from(codeSet).sort((a,b) => a.localeCompare(b, "en"));
-      renderLegend(codes);
+        }
+    }
+    const codes = Array.from(codeSet).sort((a, b) => a.localeCompare(b, "en"));
+    renderLegend(codes);
 
-      // Add source
-      map.addSource("landapp", { type: "geojson", data: landappWgs84 });
+    // Add each file as its own source + layers
+    for (const { layer, fcWgs84 } of collectionsWgs84) {
+        const sourceId = `src-${layer.id}`;
 
-      // Fill polygons (includes MultiPolygon too — Mapbox reports geometry-type as "Polygon")
-      map.addLayer({
-        id: "landapp-fill",
+        map.addSource(sourceId, { type: "geojson", data: fcWgs84 });
+
+        map.addLayer({
+        id: `fill-${layer.id}`,
         type: "fill",
-        source: "landapp",
+        source: sourceId,
         filter: ["==", ["geometry-type"], "Polygon"],
         paint: {
-          "fill-color": buildMatchExpression(codes),
-          "fill-opacity": 0.50
+            "fill-color": buildMatchExpression(codes), // style by p1 code across all files
+            "fill-opacity": 0.45
         }
-      });
+        });
 
-      // Outline
-      map.addLayer({
-        id: "landapp-outline",
+        map.addLayer({
+        id: `line-${layer.id}`,
         type: "line",
-        source: "landapp",
+        source: sourceId,
         filter: ["==", ["geometry-type"], "Polygon"],
-        paint: { "line-width": 1.5 }
-      });
+        paint: { "line-width": 1.3 }
+        });
+    }
 
-      // Hover highlight via feature-state
-      map.addLayer({
-        id: "landapp-hover",
-        type: "line",
-        source: "landapp",
-        filter: ["==", ["geometry-type"], "Polygon"],
-        paint: {
-          "line-width": [
-            "case",
-            ["boolean", ["feature-state", "hover"], false],
-            4,
-            0
-          ]
-        }
-      });
+    // Fit map to combined bounds
+    const combined = new mapboxgl.LngLatBounds();
+    for (const { fcWgs84 } of collectionsWgs84) {
+        const b = boundsFromGeoJSON(fcWgs84);
+        if (!b.isEmpty()) combined.extend(b.getSouthWest()).extend(b.getNorthEast());
+    }
+    if (!combined.isEmpty()) map.fitBounds(combined, { padding: 40 });
 
-      // Fit to bounds
-      const b = boundsFromGeoJSON(landappWgs84);
-      if (!b.isEmpty()) map.fitBounds(b, { padding: 40 });
+    // One global click handler across all fill layers
+    const fillLayerIds = layers.map(l => `fill-${l.id}`);
 
-      // Popup on click
-      map.on("click", "landapp-fill", (e) => {
-        const f = e.features?.[0];
+    map.on("click", (e) => {
+        const features = map.queryRenderedFeatures(e.point, { layers: fillLayerIds });
+        const f = features[0];
         if (!f) return;
 
         const p = f.properties || {};
-        const main = `
-          <div style="font:13px system-ui;">
-            <div><b>p1 code:</b> <span style="font-family:ui-monospace;">${escapeHtml(p[P1_CODE_KEY] ?? "")}</span></div>
-            <div><b>p1 habitat:</b> ${escapeHtml(p["p1 habitat"] ?? "")}</div>
-            <div><b>survey:</b> ${escapeHtml(p["survey name"] ?? "")} (${escapeHtml(p["survey code"] ?? "")})</div>
-            <div><b>confidence:</b> ${escapeHtml(p["confidence"] ?? "")}</div>
-          </div>
-        `;
 
         new mapboxgl.Popup({ maxWidth: "520px" })
-          .setLngLat(e.lngLat)
-          .setHTML(main)
-          .addTo(map);
-      });
-
-      // Hover state
-      let hoveredId = null;
-      map.on("mousemove", "landapp-fill", (e) => {
-        map.getCanvas().style.cursor = "pointer";
-        const f = e.features?.[0];
-        if (!f) return;
-
-        if (hoveredId !== null) {
-          map.setFeatureState({ source: "landapp", id: hoveredId }, { hover: false });
-        }
-
-        hoveredId = f.id;
-        if (hoveredId !== null && hoveredId !== undefined) {
-          map.setFeatureState({ source: "landapp", id: hoveredId }, { hover: true });
-        }
-      });
-
-      map.on("mouseleave", "landapp-fill", () => {
-        map.getCanvas().style.cursor = "";
-        if (hoveredId !== null) {
-          map.setFeatureState({ source: "landapp", id: hoveredId }, { hover: false });
-        }
-        hoveredId = null;
-      });
+        .setLngLat(e.lngLat)
+        .setHTML(`
+            <div style="font:13px system-ui">
+            <div><b>p1 code:</b> <span style="font-family:ui-monospace">${escapeHtml(p[P1_CODE_KEY] || "")}</span></div>
+            <div><b>p1 habitat:</b> ${escapeHtml(p["p1 habitat"] || "")}</div>
+            <div><b>survey:</b> ${escapeHtml(p["survey name"] || "")} (${escapeHtml(p["survey code"] || "")})</div>
+            <div><b>file:</b> ${escapeHtml(p["_layer_name"] || p["_layer_id"] || "")}</div>
+            </div>
+        `)
+        .addTo(map);
     });
+
+    map.on("mousemove", (e) => {
+        const f = map.queryRenderedFeatures(e.point, { layers: fillLayerIds })[0];
+        map.getCanvas().style.cursor = f ? "pointer" : "";
+    });
+    }
+
+    map.on("load", () => {
+    loadAllLayers().catch(err => {
+        console.error(err);
+        alert(err.message);
+    });
+    });
+
   </script>
 </body>
 </html>
