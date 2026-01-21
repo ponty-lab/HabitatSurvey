@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>LandApp → Mapbox (styled by p1 code)</title>
+
+  <link href="https://api.mapbox.com/mapbox-gl-js/v3.7.0/mapbox-gl.css" rel="stylesheet">
+  <script src="https://api.mapbox.com/mapbox-gl-js/v3.7.0/mapbox-gl.js"></script>
+
+  <!-- Reprojection -->
+  <script src="https://cdn.jsdelivr.net/npm/proj4@2.11.0/dist/proj4.js"></script>
+
+  <style>
+    html, body { height: 100%; margin: 0; }
+    #map { height: 100%; width: 100%; }
+
+    .panel {
+      position: absolute;
+      top: 12px; left: 12px;
+      background: rgba(255,255,255,0.95);
+      padding: 10px 12px;
+      border-radius: 10px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.14);
+      font: 13px/1.3 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      max-width: 320px;
+    }
+    .panel h3 { margin: 0 0 6px; font-size: 14px; }
+    .meta { color: #444; margin-bottom: 8px; }
+    .legend { display: grid; grid-template-columns: 14px 1fr; gap: 6px 8px; max-height: 240px; overflow: auto; padding-right: 6px; }
+    .swatch { width: 14px; height: 14px; border-radius: 4px; border: 1px solid rgba(0,0,0,0.15); margin-top: 2px; }
+    .code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+  </style>
+</head>
+
+<body>
+  <div id="map"></div>
+
+  <div class="panel">
+    <h3 id="title">LandApp habitats</h3>
+    <div class="meta" id="subtitle">Loading…</div>
+    <div class="legend" id="legend"></div>
+  </div>
+
+  <script>
+    mapboxgl.accessToken = "YOUR_MAPBOX_ACCESS_TOKEN";
+
+    const map = new mapboxgl.Map({
+      container: "map",
+      style: "mapbox://styles/mapbox/outdoors-v12",
+      center: [-2.93, 54.55],
+      zoom: 12
+    });
+    map.addControl(new mapboxgl.NavigationControl(), "top-right");
+
+    // EPSG:27700 (OSGB36 / British National Grid)
+    proj4.defs("EPSG:27700",
+      "+proj=tmerc +lat_0=49 +lon_0=-2 +k=0.9996012717 " +
+      "+x_0=400000 +y_0=-100000 +ellps=airy +datum=OSGB36 +units=m +no_defs"
+    );
+
+    const P1_CODE_KEY = "p1 code"; // NOTE: key has a space
+
+    function reprojectCoord([e, n]) {
+      const [lon, lat] = proj4("EPSG:27700", "WGS84", [e, n]);
+      return [lon, lat];
+    }
+
+    function reprojectGeometry(geom) {
+      const t = geom.type;
+      const c = geom.coordinates;
+
+      if (t === "Point") return { ...geom, coordinates: reprojectCoord(c) };
+      if (t === "MultiPoint") return { ...geom, coordinates: c.map(reprojectCoord) };
+      if (t === "LineString") return { ...geom, coordinates: c.map(reprojectCoord) };
+      if (t === "MultiLineString") return { ...geom, coordinates: c.map(line => line.map(reprojectCoord)) };
+      if (t === "Polygon") return { ...geom, coordinates: c.map(ring => ring.map(reprojectCoord)) };
+      if (t === "MultiPolygon") return { ...geom, coordinates: c.map(poly => poly.map(ring => ring.map(reprojectCoord))) };
+
+      throw new Error("Unsupported geometry type: " + t);
+    }
+
+    function reprojectFeatureCollection(fc) {
+      return {
+        ...fc,
+        features: fc.features.map(f => ({ ...f, geometry: reprojectGeometry(f.geometry) }))
+      };
+    }
+
+    function boundsFromGeoJSON(fc) {
+      const b = new mapboxgl.LngLatBounds();
+      const extend = (xy) => b.extend(xy);
+
+      const walk = (geom) => {
+        const t = geom.type;
+        const c = geom.coordinates;
+        if (t === "Point") extend(c);
+        else if (t === "MultiPoint") c.forEach(extend);
+        else if (t === "LineString") c.forEach(extend);
+        else if (t === "MultiLineString") c.flat().forEach(extend);
+        else if (t === "Polygon") c.flat().forEach(extend);
+        else if (t === "MultiPolygon") c.flat(2).forEach(extend);
+      };
+
+      fc.features.forEach(f => walk(f.geometry));
+      return b;
+    }
+
+    // Stable colour per code (hash → HSL → hex)
+    function hashString(str) {
+      let h = 2166136261;
+      for (let i = 0; i < str.length; i++) {
+        h ^= str.charCodeAt(i);
+        h = Math.imul(h, 16777619);
+      }
+      return h >>> 0;
+    }
+
+    function hslToHex(h, s, l) {
+      s /= 100; l /= 100;
+      const k = (n) => (n + h / 30) % 12;
+      const a = s * Math.min(l, 1 - l);
+      const f = (n) => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+      const toHex = (x) => Math.round(255 * x).toString(16).padStart(2, "0");
+      return `#${toHex(f(0))}${toHex(f(8))}${toHex(f(4))}`;
+    }
+
+    function colorForCode(code) {
+      const h = hashString(code) % 360;
+      return hslToHex(h, 70, 50);
+    }
+
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, (ch) => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;"
+      }[ch]));
+    }
+
+    function buildMatchExpression(codes) {
+      // ["match", ["get", "p1 code"], "A1.1.1", "#...", "B5", "#...", "#cccccc"]
+      const expr = ["match", ["get", P1_CODE_KEY]];
+      for (const code of codes) expr.push(code, colorForCode(code));
+      expr.push("#cccccc"); // fallback for missing/unknown
+      return expr;
+    }
+
+    function renderLegend(codes) {
+      const legend = document.getElementById("legend");
+      legend.innerHTML = "";
+
+      codes.forEach(code => {
+        const sw = document.createElement("div");
+        sw.className = "swatch";
+        sw.style.background = colorForCode(code);
+
+        const label = document.createElement("div");
+        label.innerHTML = `<span class="code">${escapeHtml(code)}</span>`;
+
+        legend.appendChild(sw);
+        legend.appendChild(label);
+      });
+    }
+
+    map.on("load", async () => {
+      const resp = await fetch("./data/habitats_689db.json");
+      if (!resp.ok) throw new Error("Failed to load GeoJSON: " + resp.status);
+      const landapp27700 = await resp.json();
+
+      // Optional: show planName if provided
+      const planName = landapp27700?.properties?.planName;
+      document.getElementById("subtitle").textContent =
+        (planName ? `Plan: ${planName}` : "Plan loaded") + " — coloured by p1 code";
+
+      // Reproject to WGS84 for Mapbox
+      const landappWgs84 = reprojectFeatureCollection(landapp27700);
+
+      // Collect unique p1 codes from features (sorted)
+      const codeSet = new Set();
+      for (const f of landappWgs84.features) {
+        const code = f?.properties?.[P1_CODE_KEY];
+        if (code && String(code).trim()) codeSet.add(String(code).trim());
+      }
+      const codes = Array.from(codeSet).sort((a,b) => a.localeCompare(b, "en"));
+      renderLegend(codes);
+
+      // Add source
+      map.addSource("landapp", { type: "geojson", data: landappWgs84 });
+
+      // Fill polygons (includes MultiPolygon too — Mapbox reports geometry-type as "Polygon")
+      map.addLayer({
+        id: "landapp-fill",
+        type: "fill",
+        source: "landapp",
+        filter: ["==", ["geometry-type"], "Polygon"],
+        paint: {
+          "fill-color": buildMatchExpression(codes),
+          "fill-opacity": 0.50
+        }
+      });
+
+      // Outline
+      map.addLayer({
+        id: "landapp-outline",
+        type: "line",
+        source: "landapp",
+        filter: ["==", ["geometry-type"], "Polygon"],
+        paint: { "line-width": 1.5 }
+      });
+
+      // Hover highlight via feature-state
+      map.addLayer({
+        id: "landapp-hover",
+        type: "line",
+        source: "landapp",
+        filter: ["==", ["geometry-type"], "Polygon"],
+        paint: {
+          "line-width": [
+            "case",
+            ["boolean", ["feature-state", "hover"], false],
+            4,
+            0
+          ]
+        }
+      });
+
+      // Fit to bounds
+      const b = boundsFromGeoJSON(landappWgs84);
+      if (!b.isEmpty()) map.fitBounds(b, { padding: 40 });
+
+      // Popup on click
+      map.on("click", "landapp-fill", (e) => {
+        const f = e.features?.[0];
+        if (!f) return;
+
+        const p = f.properties || {};
+        const main = `
+          <div style="font:13px system-ui;">
+            <div><b>p1 code:</b> <span style="font-family:ui-monospace;">${escapeHtml(p[P1_CODE_KEY] ?? "")}</span></div>
+            <div><b>p1 habitat:</b> ${escapeHtml(p["p1 habitat"] ?? "")}</div>
+            <div><b>survey:</b> ${escapeHtml(p["survey name"] ?? "")} (${escapeHtml(p["survey code"] ?? "")})</div>
+            <div><b>confidence:</b> ${escapeHtml(p["confidence"] ?? "")}</div>
+          </div>
+        `;
+
+        new mapboxgl.Popup({ maxWidth: "520px" })
+          .setLngLat(e.lngLat)
+          .setHTML(main)
+          .addTo(map);
+      });
+
+      // Hover state
+      let hoveredId = null;
+      map.on("mousemove", "landapp-fill", (e) => {
+        map.getCanvas().style.cursor = "pointer";
+        const f = e.features?.[0];
+        if (!f) return;
+
+        if (hoveredId !== null) {
+          map.setFeatureState({ source: "landapp", id: hoveredId }, { hover: false });
+        }
+
+        hoveredId = f.id;
+        if (hoveredId !== null && hoveredId !== undefined) {
+          map.setFeatureState({ source: "landapp", id: hoveredId }, { hover: true });
+        }
+      });
+
+      map.on("mouseleave", "landapp-fill", () => {
+        map.getCanvas().style.cursor = "";
+        if (hoveredId !== null) {
+          map.setFeatureState({ source: "landapp", id: hoveredId }, { hover: false });
+        }
+        hoveredId = null;
+      });
+    });
+  </script>
+</body>
+</html>
