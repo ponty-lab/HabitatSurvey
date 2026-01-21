@@ -3,15 +3,14 @@ export const P1_HABITAT_KEY = "p1 habitat";
 
 export const PHASE1_COLORS = {
   "A1.1.1": "#2e7d32", // Semi-natural broadleaved woodland
-  "A1.1.2": "#1b5e20",
-  "A1.2.1": "#3aa66a",
-  "A1.2.2": "#4fa3a5", // Wet woodland
+  "A1.1.2": "#1b5e20", // Broad-leaved woodland - plantation
+  "A1.2.1": "#3aa66a", // Semi-natural coniferous woodland
+  "A1.2.2": "#4fa3a5", // Coniferous woodland - plantation
   "A2.1":   "#4caf50", // Dense scrub
   "B1.1":   "#cddc39", // Acid grassland, unimproved
   "B2":     "#dce775",
   "B5":     "#4dd0e1", // Marsh / marshy grassland
-  "C1":     "#d18b47", // Bracken
-  "C1.1":   "#d18b47",
+  "C1.1":   "#d18b47", // Bracken
   "D2":     "#9575cd", // Wet heath
   "D6":     "#b39ddb", // Dry heath
   "E1.6.1": "#8d6e63", // Blanket bog
