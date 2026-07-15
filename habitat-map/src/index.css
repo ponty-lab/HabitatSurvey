@@ -1,0 +1,23 @@
+@import "tailwindcss";
+
+html,
+body,
+#root {
+    height: 100%;
+    width: 100%;
+    margin: 0
+}
+
+/* src/index.css */
+.habitat-popup .mapboxgl-popup-content {
+    padding: 10px 12px;
+    border-radius: 10px;
+}
+
+.mapboxgl-canvas {
+    cursor: default !important;
+}
+
+.mapboxgl-canvas:active {
+    cursor: grabbing !important;
+}

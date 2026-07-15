@@ -1,0 +1,21 @@
+<!doctype html>
+<html>
+
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="refresh" content="0; url=./index.html" />
+    <script>
+        // Preserve the current path/query/hash when redirecting to index.html
+        const l = window.location;
+        const newUrl =
+            l.pathname.replace(/\/[^/]*$/, "/") +
+            "index.html" +
+            "?redirect=" +
+            encodeURIComponent(l.pathname + l.search + l.hash);
+        window.location.replace(newUrl);
+    </script>
+</head>
+
+<body></body>
+
+</html>
