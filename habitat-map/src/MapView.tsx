@@ -52,7 +52,7 @@ export function MapView() {
             const loaded = await Promise.all(
                 m.layers.map(async (layer) => {
                     const resp = await fetch(`${BASE_URL}${layer.url}`);
-                    if (!resp.ok) throw new Error(`Failed to load ${layer.url}`);
+                    if (!resp.ok) throw new Error(`Failed to load layer ${layer.url}`);
                     const fc27700 = (await resp.json()) as FC;
                     const fcWgs84 = reprojectFeatureCollection(fc27700, layer);
                     return [layer.id, fcWgs84] as const;
